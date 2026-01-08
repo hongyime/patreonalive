@@ -13,11 +13,10 @@ def get_headers(token):
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "User-Agent": "PatreonKeepAliveBot/3.1"
+        "User-Agent": "PatreonKeepAliveBot/4.0"
     }
 
 def get_tokens():
-    # Load current token
     if not os.path.exists(TOKEN_FILE):
         print("Error: token.txt not found!")
         exit(1)
@@ -34,7 +33,7 @@ def get_tokens():
     }
     
     print("Exchanging tokens...")
-    response = requests.post(url, data=data, headers={"User-Agent": "PatreonBot/3.1"})
+    response = requests.post(url, data=data, headers={"User-Agent": "PatreonBot/4.0"})
     
     if response.status_code != 200:
         print(f"Auth Failed: {response.text}")
@@ -42,7 +41,6 @@ def get_tokens():
         
     tokens = response.json()
     
-    # SAVE IMMEDIATELY
     print("Saving new refresh token...")
     with open(TOKEN_FILE, "w") as f:
         f.write(tokens['refresh_token'])
@@ -50,17 +48,17 @@ def get_tokens():
     return tokens['access_token']
 
 def create_and_delete_draft(token):
-    # Use the CAMPAIGN-SPECIFIC endpoint to avoid 405 errors
-    url = f"https://www.patreon.com/api/oauth2/api/campaigns/{CAMPAIGN_ID}/posts"
+    # CORRECTED URL: Standard V1 endpoint
+    url = "https://www.patreon.com/api/posts"
     
     payload = {
         "data": {
             "type": "post",
             "attributes": {
-                "title": "Keep Alive",
-                "content": "<p>Automated check.</p>",
+                "title": "Keep Alive Signal",
+                "content": "<p>Automated activity check.</p>",
                 "post_type": "text_only",
-                "post_status": "draft",
+                "post_status": "draft", # Silent draft
                 "is_paid": False,
                 "is_public": False
             },
@@ -75,9 +73,10 @@ def create_and_delete_draft(token):
         }
     }
     
-    print("Creating draft...")
+    print("Creating draft via Standard V1 URL...")
     r = requests.post(url, json=payload, headers=get_headers(token))
     
+    # If this still fails, we print the full error to debug
     if r.status_code != 201:
         print(f"Creation Failed: {r.status_code} - {r.text}")
         r.raise_for_status()
@@ -88,7 +87,7 @@ def create_and_delete_draft(token):
     time.sleep(3)
     
     # Delete it
-    delete_url = f"https://www.patreon.com/api/oauth2/api/posts/{post_id}"
+    delete_url = f"https://www.patreon.com/api/posts/{post_id}"
     print(f"Deleting {post_id}...")
     requests.delete(delete_url, headers=get_headers(token))
     print("Done.")
@@ -100,8 +99,7 @@ def main():
         print("Cycle Complete.")
     except Exception as e:
         print(f"Script Error: {e}")
-        # We exit with 0 (Success) so that GitHub Actions will still run the "Commit" step
-        # This prevents the 'Dead Token' trap.
+        # Exit success (0) so GitHub still saves the token!
         exit(0) 
 
 if __name__ == "__main__":
