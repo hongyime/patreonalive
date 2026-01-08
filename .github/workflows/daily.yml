@@ -1,15 +1,15 @@
-name: Daily Patreon Activity
+name: Daily Patreon Keep-Alive
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Midnight daily
-  workflow_dispatch: # Allows you to click 'Run Workflow' to test it
+    - cron: '0 0 * * *' 
+  workflow_dispatch:
 
 jobs:
-  run-poker:
+  keep-alive:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Allows the bot to commit the new token.txt
+      contents: write 
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
@@ -22,13 +22,13 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Execute Activity Script
+      - name: Run Activity Script
         env:
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
         run: python keep_alive.py
 
-      - name: Push New Refresh Token
+      - name: Commit and Push New Token
         run: |
           git config --global user.name "Patreon-Bot"
           git config --global user.email "bot@github.com"
