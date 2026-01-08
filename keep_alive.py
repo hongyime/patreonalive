@@ -13,7 +13,7 @@ def get_headers(token):
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "User-Agent": "PatreonKeepAliveBot/4.0"
+        "User-Agent": "PatreonKeepAliveBot/5.0"
     }
 
 def get_tokens():
@@ -33,7 +33,7 @@ def get_tokens():
     }
     
     print("Exchanging tokens...")
-    response = requests.post(url, data=data, headers={"User-Agent": "PatreonBot/4.0"})
+    response = requests.post(url, data=data, headers={"User-Agent": "PatreonBot/5.0"})
     
     if response.status_code != 200:
         print(f"Auth Failed: {response.text}")
@@ -47,20 +47,17 @@ def get_tokens():
         
     return tokens['access_token']
 
-def create_and_delete_draft(token):
-    # CORRECTED URL: Standard V1 endpoint
-    url = "https://www.patreon.com/api/posts"
+def trigger_webhook_activity(token):
+    # This is a NATIVE V2 Endpoint. No legacy hacks.
+    url = "https://www.patreon.com/api/oauth2/v2/webhooks"
     
+    # payload to create a dummy webhook
     payload = {
         "data": {
-            "type": "post",
+            "type": "webhook",
             "attributes": {
-                "title": "Keep Alive Signal",
-                "content": "<p>Automated activity check.</p>",
-                "post_type": "text_only",
-                "post_status": "draft", # Silent draft
-                "is_paid": False,
-                "is_public": False
+                "triggers": ["posts:publish"],
+                "uri": "https://hong-yi.me/keep-alive-dummy"
             },
             "relationships": {
                 "campaign": {
@@ -73,33 +70,32 @@ def create_and_delete_draft(token):
         }
     }
     
-    print("Creating draft via Standard V1 URL...")
+    print("Creating dummy webhook...")
     r = requests.post(url, json=payload, headers=get_headers(token))
     
-    # If this still fails, we print the full error to debug
     if r.status_code != 201:
-        print(f"Creation Failed: {r.status_code} - {r.text}")
+        print(f"Webhook Creation Failed: {r.status_code} - {r.text}")
         r.raise_for_status()
         
-    post_id = r.json()['data']['id']
-    print(f"Draft created: {post_id}")
+    webhook_id = r.json()['data']['id']
+    print(f"Webhook created: {webhook_id}")
     
-    time.sleep(3)
+    time.sleep(2)
     
-    # Delete it
-    delete_url = f"https://www.patreon.com/api/posts/{post_id}"
-    print(f"Deleting {post_id}...")
+    # Delete it immediately
+    delete_url = f"https://www.patreon.com/api/oauth2/v2/webhooks/{webhook_id}"
+    print(f"Deleting webhook {webhook_id}...")
     requests.delete(delete_url, headers=get_headers(token))
-    print("Done.")
+    print("Done. Activity Registered.")
 
 def main():
     try:
         access_token = get_tokens()
-        create_and_delete_draft(access_token)
+        trigger_webhook_activity(access_token)
         print("Cycle Complete.")
     except Exception as e:
         print(f"Script Error: {e}")
-        # Exit success (0) so GitHub still saves the token!
+        # Exit with Success code so GitHub commits the token
         exit(0) 
 
 if __name__ == "__main__":
