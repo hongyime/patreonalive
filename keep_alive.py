@@ -2,11 +2,10 @@ import requests
 import os
 import time
 
-# Hardcoded Post ID from your URL
-POST_ID = "127069411"
+# --- CONFIGURATION ---
+CAMPAIGN_ID = "12502474" 
 TOKEN_FILE = "token.txt"
 
-# Environment Variables from GitHub Secrets
 CLIENT_ID = os.environ['PATREON_CLIENT_ID']
 CLIENT_SECRET = os.environ['PATREON_CLIENT_SECRET']
 
@@ -14,11 +13,11 @@ def get_headers(token):
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/vnd.api+json",
-        "User-Agent": "PatreonKeepAliveBot/1.0 (Contact: your_email@example.com)"
+        "User-Agent": "PatreonKeepAliveBot/1.2 (Mozilla/5.0)",
+        "Accept": "application/vnd.api+json"
     }
 
 def get_tokens():
-    """Reads refresh_token from file, gets a new pair, and updates the file."""
     with open(TOKEN_FILE, "r") as f:
         refresh_token = f.read().strip()
     
@@ -30,52 +29,54 @@ def get_tokens():
         "client_secret": CLIENT_SECRET,
     }
     
-    response = requests.post(url, data=data, headers={"User-Agent": "PatreonKeepAliveBot/1.0"})
+    response = requests.post(url, data=data, headers={"User-Agent": "PatreonBot/1.2"})
     response.raise_for_status()
     tokens = response.json()
     
-    # Update token.txt with the brand new refresh token for the next run
     with open(TOKEN_FILE, "w") as f:
         f.write(tokens['refresh_token'])
         
     return tokens['access_token']
 
-def get_current_content(token):
-    url = f"https://www.patreon.com/api/oauth2/v2/posts/{POST_ID}?fields%5Bpost%5D=content"
-    response = requests.get(url, headers=get_headers(token))
-    response.raise_for_status()
-    return response.json()['data']['attributes']['content']
-
-def update_post(token, content):
-    url = f"https://www.patreon.com/api/oauth2/v2/posts/{POST_ID}"
+def update_campaign(token, content):
+    url = f"https://www.patreon.com/api/oauth2/v2/campaigns/{CAMPAIGN_ID}"
     payload = {
         "data": {
-            "type": "post",
-            "id": POST_ID,
-            "attributes": {"content": content}
+            "type": "campaign",
+            "id": CAMPAIGN_ID,
+            "attributes": {
+                "about": content
+            }
         }
     }
-    response = requests.patch(url, json=payload, headers=get_headers(token))
-    response.raise_for_status()
+    r = requests.patch(url, json=payload, headers=get_headers(token))
+    r.raise_for_status()
+
+def get_campaign_about(token):
+    url = f"https://www.patreon.com/api/oauth2/v2/campaigns/{CAMPAIGN_ID}?fields%5Bcampaign%5D=about"
+    r = requests.get(url, headers=get_headers(token))
+    r.raise_for_status()
+    return r.json()['data']['attributes']['about']
 
 def main():
     try:
-        print("Refreshing tokens and rotating secrets...")
+        print("Rotating refresh tokens...")
         access_token = get_tokens()
         
-        print(f"Fetching content for post {POST_ID}...")
-        original_content = get_current_content(access_token)
+        print("Fetching current 'About' content...")
+        original_about = get_campaign_about(access_token)
         
-        print("Action 1: Triggering activity (adding dot)...")
-        # Appends a dot to the end of the HTML string
-        update_post(access_token, original_content + ".")
+        # Step 1: Add fullstop
+        print("Action 1: Adding fullstop to trigger activity...")
+        update_campaign(access_token, original_about + ".")
         
-        time.sleep(5) 
+        time.sleep(5)
         
-        print("Action 2: Reverting change...")
-        update_post(access_token, original_content)
+        # Step 2: Remove fullstop
+        print("Action 2: Reverting to original content...")
+        update_campaign(access_token, original_about)
         
-        print("Success! Patreon page marked as active.")
+        print("Success! Activity cycle completed.")
     except Exception as e:
         print(f"Failed: {e}")
         exit(1)
