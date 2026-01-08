@@ -2,14 +2,14 @@ name: Daily Patreon Keep-Alive
 
 on:
   schedule:
-    - cron: '0 0 * * *' 
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
     permissions:
-      contents: write 
+      contents: write
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
@@ -28,7 +28,8 @@ jobs:
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
         run: python keep_alive.py
 
-      - name: Commit and Push New Token
+      - name: Commit New Token (ALWAYS)
+        if: always()  # <--- THIS IS THE FIX
         run: |
           git config --global user.name "Patreon-Bot"
           git config --global user.email "bot@github.com"
