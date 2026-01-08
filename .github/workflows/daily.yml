@@ -1,37 +1,37 @@
-name: Daily Patreon Keep-Alive
+name: Daily Patreon Activity
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Runs every day at midnight
-  workflow_dispatch:
+    - cron: '0 0 * * *' # Midnight daily
+  workflow_dispatch: # Allows you to click 'Run Workflow' to test it
 
 jobs:
-  keep-alive:
+  run-poker:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Needed to push the new token back to the repo
+      contents: write # Allows the bot to commit the new token.txt
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout Repo
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run Script
+      - name: Execute Activity Script
         env:
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
         run: python keep_alive.py
 
-      - name: Commit and Push New Token
+      - name: Push New Refresh Token
         run: |
-          git config --global user.name "PatreonBot"
+          git config --global user.name "Patreon-Bot"
           git config --global user.email "bot@github.com"
           git add token.txt
-          git commit -m "Rotate Patreon Refresh Token [skip ci]" || echo "No changes to commit"
+          git commit -m "Rotate Refresh Token [skip ci]" || echo "No changes to commit"
           git push
