@@ -34,5 +34,10 @@ jobs:
           git config --global user.name "Patreon-Bot"
           git config --global user.email "bot@github.com"
           git add token.txt
-          git commit -m "Rotate Refresh Token [skip ci]" || echo "No changes to commit"
-          git push
+          git commit -m "Rotate Refresh Token [skip ci]" || { echo "No changes to commit"; exit 0; }
+          # Retry push with rebase to survive races with heartbeat.yml
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
