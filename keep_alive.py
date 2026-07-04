@@ -94,9 +94,10 @@ def main():
         trigger_webhook_activity(access_token)
         print("Cycle Complete.")
     except Exception as e:
-        print(f"Script Error: {e}")
-        # Exit with Success code so GitHub commits the token
-        exit(0) 
+        # Surface real failure so the workflow reports it.
+        # The commit step uses `if: always()` — the rotated token still gets committed.
+        print(f"::error::Script Error: {e}")
+        exit(1)
 
 if __name__ == "__main__":
     main()
