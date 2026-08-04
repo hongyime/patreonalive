@@ -1,15 +1,27 @@
 name: Daily Patreon Keep-Alive
 
+# COST-OPTIMISED + SECURED (2026-08-04):
+# - Removed the `git commit token.txt` step. Rotated tokens now persist via
+#   actions/cache between runs instead of being committed to the repo (which
+#   was leaking every rotation into public git history).
+# - Bootstrap token comes from PATREON_REFRESH_TOKEN secret on cache miss.
+# - `permissions: contents: read` — workflow no longer needs write access.
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"  # Daily 00:00 UTC (08:00 SGT)
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write  # required to save the workflow cache
+
+concurrency:
+  group: patreon-keep-alive
+  cancel-in-progress: false
 
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
@@ -19,6 +31,18 @@ jobs:
         with:
           python-version: '3.11'
 
+      # PRIMARY: restore the last-known refresh_token from the workflow cache.
+      # Each successful run saves a new cache entry keyed by run_id; the prefix
+      # `patreon-refresh-token-` lets restore grab the most recent one.
+      - name: Restore token cache
+        id: token-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: token.txt
+          key: patreon-refresh-token-${{ github.run_id }}
+          restore-keys: |
+            patreon-refresh-token-
+
       - name: Install dependencies
         run: pip install requests
 
@@ -26,18 +50,19 @@ jobs:
         env:
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          # Bootstrap fallback used only when the cache is empty (first run,
+          # >7 day gap, or after a manual cache purge). Patreon rotates the
+          # refresh_token on every use — losing the newest token means the
+          # next run cannot refresh at all.
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
         run: python keep_alive.py
 
-      - name: Commit New Token (ALWAYS)
-        if: always()
-        run: |
-          git config --global user.name "Patreon-Bot"
-          git config --global user.email "bot@github.com"
-          git add token.txt
-          git commit -m "Rotate Refresh Token [skip ci]" || { echo "No changes to commit"; exit 0; }
-          # Retry push with rebase to survive races with heartbeat.yml
-          for i in 1 2 3; do
-            git pull --rebase origin main && git push && break
-            echo "Push attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+      # CRITICAL: always save the token back to cache, even if a later
+      # sync step failed after a successful refresh. Matches the pattern
+      # letterboxd2trakt uses for the same reason.
+      - name: Save token cache
+        if: always() && hashFiles('token.txt') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: token.txt
+          key: patreon-refresh-token-${{ github.run_id }}

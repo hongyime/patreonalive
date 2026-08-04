@@ -1,4 +1,7 @@
 
+# OAuth refresh token — populated by actions/cache; bootstrap from PATREON_REFRESH_TOKEN secret
+token.txt
+
 # AI / editor dot directories (managed via sourcerepo)
 .*
 !.github/
