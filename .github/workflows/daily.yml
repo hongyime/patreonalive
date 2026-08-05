@@ -36,7 +36,7 @@ jobs:
       # `patreon-refresh-token-` lets restore grab the most recent one.
       - name: Restore token cache
         id: token-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: token.txt
           key: patreon-refresh-token-${{ github.run_id }}
@@ -62,7 +62,7 @@ jobs:
       # letterboxd2trakt uses for the same reason.
       - name: Save token cache
         if: always() && hashFiles('token.txt') != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: token.txt
           key: patreon-refresh-token-${{ github.run_id }}
