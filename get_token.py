@@ -176,7 +176,7 @@ def main():
     print()
     print("Or run this directly (one-shot):")
     print()
-    print(f'    gh secret set PATREON_REFRESH_TOKEN --repo bryanseah234/patreonalive --body "{refresh_token}"')
+    print(f'    gh secret set PATREON_REFRESH_TOKEN --repo hongyime/patreonalive --body "{refresh_token}"')
     print("=" * 70)
 
 
