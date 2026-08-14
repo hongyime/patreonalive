@@ -2,9 +2,16 @@
 # OAuth refresh token — populated by actions/cache; bootstrap from PATREON_REFRESH_TOKEN secret
 token.txt
 
+
 # AI / editor dot directories (managed via sourcerepo)
 .*
 !.github/
+!.agents/
+.agents/*
+!.agents/STATE.md
+!.agents/JOURNAL.md
+!.agents/handoffs/
+!.agents/handoffs/**
 !.gitignore
 !.gitattributes
 !.gitmodules
@@ -27,14 +34,7 @@ token.txt
 !.env.sample
 !.sourcery.yml
 !.deepsource.toml
-.env
-.env.*
-node_modules/
-.venv/
-venv/
-dist/
-build/
-.next/
-coverage/
-__pycache__/
-.pytest_cache/
+skills/
+skills-lock.json
+docs/
+# End AI / editor dot directories (managed via sourcerepo)
