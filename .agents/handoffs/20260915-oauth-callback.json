@@ -1,0 +1,8 @@
+{
+  "task": "fix/oauth-callback-validation targeting main",
+  "problem": "The bootstrap accepted any code, ended on a favicon request, reflected provider HTML and waited without a deadline.",
+  "change": "One-use state validation, exact local callback routing, escaped private responses and a bounded listener with Windows socket deadlines.",
+  "validation": "Synthetic loopback tests and mocked exchanges; hosted Linux Python 3.11 and Windows Python 3.12 workflow added. No real OAuth attempt or scheduled job was run during validation.",
+  "preserved": ["keep_alive.py", ".github/workflows/daily.yml", "requirements.txt", "token exchange helpers", "existing credentials and refresh-token cache"],
+  "remaining": "Live token persistence remains in GitHub Actions cache outside Supabase. Preserve the latest rotated token and coordinate the daily writer before migration; do not purge or retire credentials as part of this fix."
+}

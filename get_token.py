@@ -7,7 +7,7 @@ Redirect URIs list first (Patreon requires http/https URLs — the
 older `urn:ietf:wg:oauth:2.0:oob` doesn't work in their dashboard).
 
 Usage (PowerShell):
-    cd 'X:\01 REPOSITORIES\patreonalive'
+    # Run from the repository directory.
     $env:PATREON_CLIENT_ID = '<your-client-id>'
     $env:PATREON_CLIENT_SECRET = '<your-new-client-secret>'
     python get_token.py
@@ -30,9 +30,7 @@ import os
 import sys
 import json
 import subprocess
-import urllib.parse
-import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from oauth_callback import OAuthAuthorizationError, capture_authorization_code
 
 import requests
 
@@ -40,50 +38,6 @@ CLIENT_ID = os.environ.get('PATREON_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('PATREON_CLIENT_SECRET')
 REDIRECT_URI = os.environ.get('PATREON_REDIRECT_URI', 'http://localhost:8080/callback')
 SCOPES = "w:campaigns.webhook"
-
-# Shared state so the request handler can hand results back to main().
-_result = {'code': None, 'error': None}
-
-
-class OAuthCallbackHandler(BaseHTTPRequestHandler):
-    """Handles the single redirect Patreon sends after user approval."""
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed.query)
-
-        if 'code' in params:
-            _result['code'] = params['code'][0]
-            body = (
-                b"<html><body style='font-family:sans-serif;padding:2em'>"
-                b"<h2>Success</h2>"
-                b"<p>Code received. You can close this tab and return to the terminal.</p>"
-                b"</body></html>"
-            )
-            self.send_response(200)
-        elif 'error' in params:
-            _result['error'] = f"{params.get('error', ['unknown'])[0]}: {params.get('error_description', [''])[0]}"
-            body = (
-                b"<html><body style='font-family:sans-serif;padding:2em'>"
-                b"<h2>OAuth error</h2>"
-                b"<pre>" + _result['error'].encode('utf-8') + b"</pre>"
-                b"</body></html>"
-            )
-            self.send_response(400)
-        else:
-            _result['error'] = f"unexpected callback path: {self.path}"
-            body = b"<html><body>Nothing here.</body></html>"
-            self.send_response(404)
-
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    # Silence the default access-log spam.
-    def log_message(self, format, *args):
-        return
-
 
 def main():
     missing = []
@@ -98,60 +52,17 @@ def main():
         print("  $env:PATREON_CLIENT_SECRET='<your-new-client-secret>'")
         sys.exit(1)
 
-    auth_url = (
-        "https://www.patreon.com/oauth2/authorize?"
-        + urllib.parse.urlencode({
-            "response_type": "code",
-            "client_id": CLIENT_ID,
-            "redirect_uri": REDIRECT_URI,
-            "scope": SCOPES,
-        })
-    )
-
-    print("=" * 70)
-    print("PREREQUISITE — register this redirect URI on your Patreon app:")
-    print()
-    print(f"    {REDIRECT_URI}")
-    print()
-    print("At: https://www.patreon.com/portal/registration/register-clients")
-    print("Add it in the 'Redirect URIs' field, save, then re-run this script.")
-    print("=" * 70)
-    print()
-    print("Starting local HTTP server on 127.0.0.1:8080 ...")
-
-    server = HTTPServer(('127.0.0.1', 8080), OAuthCallbackHandler)
-    server.timeout = None  # per-request timeout; handle_request blocks until 1 request
-
-    print(f"Opening authorization URL in your default browser:")
-    print(f"    {auth_url}")
-    print()
-    print("If it doesn't open, copy that URL into a browser manually.")
-    print("Waiting for redirect from Patreon...")
-    print()
-
     try:
-        webbrowser.open(auth_url)
-    except Exception:
-        pass  # not fatal — user can open manually
-
-    try:
-        server.handle_request()  # blocks until Patreon redirects to localhost
+        timeout = float(os.environ.get('PATREON_AUTH_TIMEOUT', '300'))
+        code = capture_authorization_code(CLIENT_ID, REDIRECT_URI, SCOPES, timeout=timeout)
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        sys.exit(1)
-    finally:
-        server.server_close()
-
-    if _result['error']:
-        print(f"ERROR from Patreon: {_result['error']}")
+        sys.exit(130)
+    except (OAuthAuthorizationError, ValueError, OSError) as error:
+        print(f"ERROR: {error}")
         sys.exit(1)
 
-    code = _result['code']
-    if not code:
-        print("ERROR: server exited without a code — did Patreon reject the request?")
-        sys.exit(1)
-
-    print(f"Got code: {code[:12]}... (length {len(code)})")
+    print("Authorization code received.")
     print("Exchanging code for tokens...")
 
     # Use curl.exe first — it uses Windows' native SChannel TLS which sidesteps
