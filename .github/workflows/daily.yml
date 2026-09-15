@@ -22,6 +22,7 @@ concurrency:
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
@@ -44,9 +45,10 @@ jobs:
             patreon-refresh-token-
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install -r requirements.txt
 
       - name: Run Activity Script
+        timeout-minutes: 2
         env:
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}

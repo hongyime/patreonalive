@@ -7,12 +7,14 @@ on:
       - '**.py'
       - requirements.txt
       - .github/workflows/oauth-tests.yml
+      - .github/workflows/daily.yml
   push:
     branches: [main]
     paths:
       - '**.py'
       - requirements.txt
       - .github/workflows/oauth-tests.yml
+      - .github/workflows/daily.yml
 
 permissions:
   contents: read

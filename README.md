@@ -47,6 +47,21 @@ from GitHub Actions secrets. The latest refresh token is restored into ignored
 a cache miss. A rotated token is saved to the cache even if a later activity
 step fails. The job reports failures with a nonzero exit status.
 
+Each API call has a five-second connection timeout and a twenty-second read
+timeout. Redirects and automatic retries are disabled. These are network
+inactivity limits; the Actions script step also has a two-minute total limit,
+within a five-minute job limit, so the cache-save step has time to run after
+a script timeout. A cancelled or terminated runner can still interrupt saving.
+
+Success requires confirmed webhook creation and deletion. A failed deletion
+leaves the created webhook ID in the job log for review; the job does not
+silently report success or delete unrelated webhooks. Provider response bodies
+and raw exception messages are omitted from error logs. An invalid refresh
+response preserves the saved token; a valid rotated refresh token is saved
+before using its access token or creating a webhook. A request timeout can
+leave its remote outcome uncertain, so token refreshes and webhook creation
+are not retried automatically.
+
 This persistence currently uses GitHub Actions cache, outside Supabase. Moving
 it requires preserving the latest rotated token and coordinating the writer;
 the OAuth callback repair does not migrate or retire it. Do not purge the cache

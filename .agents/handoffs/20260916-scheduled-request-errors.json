@@ -1,0 +1,7 @@
+{
+  "task": "fix/scheduled-request-errors targeting main",
+  "problem": "Daily runs had no request deadlines, logged provider error bodies and reported success after failed webhook deletion. Invalid refresh payloads could truncate the current token.",
+  "change": "Bound connection/read waits, reject redirects and unexpected status codes, check the created webhook identity and completed deletion, and report sanitized errors. Validate refresh values before opening token storage and retain a valid rotation before later failures.",
+  "validation": "All 29 tests pass with pinned requests 2.33.1 in an isolated Python 3.12 environment; dependency consistency and git diff checks pass. Eleven scheduled-run cases cover status handling, sensitive errors, deadlines, identity validation and token retention. Hosted checks remain required. No real token exchange or webhook action is used for testing.",
+  "remaining": "The scheduled writer still persists refresh tokens in GitHub Actions cache. Preserve the latest token and coordinate the writer before a Supabase migration; do not purge caches or retire credentials. A failed or ambiguous webhook request may need review of the provider dashboard."
+}
