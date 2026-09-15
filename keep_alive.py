@@ -1,5 +1,6 @@
 import requests
 import os
+import re
 import time
 
 # --- CONFIGURATION ---
@@ -12,6 +13,37 @@ TOKEN_FILE = "token.txt"
 
 CLIENT_ID = os.environ['PATREON_CLIENT_ID']
 CLIENT_SECRET = os.environ['PATREON_CLIENT_SECRET']
+REQUEST_TIMEOUT = (5, 20)
+
+
+class KeepAliveError(RuntimeError):
+    """An operational error whose message is safe for the workflow log."""
+
+
+def request(operation: str, method: str, url: str, expected: tuple[int, ...], **kwargs) -> requests.Response:
+    """Perform one request; POSTs with uncertain outcomes are never retried."""
+    send = requests.post if method == "POST" else requests.delete
+    try:
+        result = send(url, timeout=REQUEST_TIMEOUT, allow_redirects=False, **kwargs)
+    except requests.RequestException:
+        raise KeepAliveError(f"{operation}: network request failed; no automatic retry.") from None
+    if result.status_code not in expected:
+        status = result.status_code
+        result.close()
+        raise KeepAliveError(f"{operation}: unexpected HTTP status {status}.")
+    return result
+
+
+def response_object(result: requests.Response, operation: str) -> dict:
+    try:
+        value = result.json()
+    except ValueError:
+        raise KeepAliveError(f"{operation}: invalid JSON response.") from None
+    finally:
+        result.close()
+    if not isinstance(value, dict):
+        raise KeepAliveError(f"{operation}: invalid response object.")
+    return value
 
 
 def get_headers(token):
@@ -49,21 +81,23 @@ def get_tokens():
     }
 
     print("Exchanging tokens...")
-    response = requests.post(url, data=data, headers={"User-Agent": "PatreonBot/5.0"})
-
-    if response.status_code != 200:
-        print(f"Auth Failed: {response.text}")
-        response.raise_for_status()
-
-    tokens = response.json()
+    response = request("Token refresh", "POST", url, (200,), data=data,
+                       headers={"User-Agent": "PatreonBot/5.0"})
+    tokens = response_object(response, "Token refresh")
+    rotated_token = tokens.get('refresh_token')
+    if not isinstance(rotated_token, str) or not rotated_token.strip():
+        raise KeepAliveError("Token refresh: missing valid refresh token; saved token unchanged.")
 
     # Persist to disk so actions/cache/save picks it up post-run.
     # NEVER committed to git — .gitignore excludes token.txt.
     print("Saving rotated refresh token to token.txt (cache-persisted, not tracked)...")
-    with open(TOKEN_FILE, "w") as f:
-        f.write(tokens['refresh_token'])
+    with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+        f.write(rotated_token.strip())
 
-    return tokens['access_token']
+    access_token = tokens.get('access_token')
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise KeepAliveError("Token refresh: invalid access token; rotated refresh token retained.")
+    return access_token
 
 
 def trigger_webhook_activity(token):
@@ -90,13 +124,11 @@ def trigger_webhook_activity(token):
     }
 
     print("Creating dummy webhook...")
-    r = requests.post(url, json=payload, headers=get_headers(token))
-
-    if r.status_code != 201:
-        print(f"Webhook Creation Failed: {r.status_code} - {r.text}")
-        r.raise_for_status()
-
-    webhook_id = r.json()['data']['id']
+    r = request("Webhook creation", "POST", url, (201,), json=payload, headers=get_headers(token))
+    created = response_object(r, "Webhook creation").get('data')
+    webhook_id = created.get('id') if isinstance(created, dict) else None
+    if not isinstance(webhook_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', webhook_id):
+        raise KeepAliveError("Webhook creation: invalid webhook identity; cleanup needs review.")
     print(f"Webhook created: {webhook_id}")
 
     time.sleep(2)
@@ -104,7 +136,8 @@ def trigger_webhook_activity(token):
     # Delete it immediately
     delete_url = f"https://www.patreon.com/api/oauth2/v2/webhooks/{webhook_id}"
     print(f"Deleting webhook {webhook_id}...")
-    requests.delete(delete_url, headers=get_headers(token))
+    deleted = request("Webhook deletion", "DELETE", delete_url, (200, 204), headers=get_headers(token))
+    deleted.close()
     print("Done. Activity Registered.")
 
 
@@ -113,12 +146,15 @@ def main():
         access_token = get_tokens()
         trigger_webhook_activity(access_token)
         print("Cycle Complete.")
-    except Exception as e:
+    except KeepAliveError as e:
+        print(f"::error::{e}")
+        raise SystemExit(1) from None
+    except Exception:
         # Surface real failure so the workflow reports it.
         # Rotated token (if any) is already saved to token.txt by get_tokens();
         # the workflow's cache-save step runs even on failure via `if: always()`.
-        print(f"::error::Script Error: {e}")
-        exit(1)
+        print("::error::Cycle failed. Check configuration and token storage; private error details omitted.")
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
