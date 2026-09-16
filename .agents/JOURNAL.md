@@ -1,0 +1,1 @@
+2026-09-16: Baseline review batch-a. Created STATE.md and JOURNAL.md (were missing; only handoffs/ existed). No open issues. Dependabot PR #20 pending. Recent hardening PRs #21/#22 already merged. token.txt confirmed gitignored + not tracked. No fixes required.
