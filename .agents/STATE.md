@@ -8,3 +8,7 @@
 - Code review: request wrapper enforces status expectations, network exceptions never retried on POST, token rotation persisted only to gitignored token.txt bootstrapped from `PATREON_REFRESH_TOKEN` secret. Webhook id validated against `[A-Za-z0-9_-]{1,128}` before deletion (SSRF-safe). No exposed secrets in tracked files.
 - Free-tier surface: none. Runs on GitHub Actions schedule; no Vercel, no Supabase.
 - Next safe steps: none required. Awaiting merge decision on Dependabot #20 (unrelated to Vercel hold).
+
+## Privacy maintenance - 2026-09-27
+
+Remove the optional personal security contact while retaining private vulnerability-reporting guidance. The narrow documentation patch is prepared from the current default branch; staged whitespace and the inherited identity hook are publication checks. Application behavior is unchanged.
