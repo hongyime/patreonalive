@@ -20,7 +20,6 @@ on:
       - "**/package.json"
       - "**/pnpm-lock.yaml"
       - "**/package-lock.json"
-      - "**/requirements*.txt"
       - "**/pyproject.toml"
       - ".github/workflows/codeql.yml"
   pull_request:
@@ -38,7 +37,6 @@ on:
       - "**/package.json"
       - "**/pnpm-lock.yaml"
       - "**/package-lock.json"
-      - "**/requirements*.txt"
       - "**/pyproject.toml"
   schedule:
     - cron: "0 14 * * 3" # Weekly Wed 10 PM SGT (off Monday spike)

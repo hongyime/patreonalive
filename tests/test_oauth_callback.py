@@ -4,10 +4,12 @@ import contextlib
 import http.client
 import io
 import socket
+import subprocess
 import threading
 import time
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import get_token
@@ -214,12 +216,12 @@ class BootstrapTests(unittest.TestCase):
 
     def test_callback_failures_never_exchange_tokens(self) -> None:
         for error, exit_code in ((TimeoutError(), 1), (OAuthAuthorizationError("denied"), 1), (ValueError(), 1), (OSError(), 1), (KeyboardInterrupt(), 130)):
-            with self.subTest(error=type(error).__name__), patch.multiple(get_token, CLIENT_ID="fixture", CLIENT_SECRET="fixture"), patch.object(get_token, "capture_authorization_code", side_effect=error), patch.object(get_token, "_exchange_via_curl") as curl, patch.object(get_token, "_exchange_via_requests") as requests, contextlib.redirect_stdout(io.StringIO()):
+            with self.subTest(error=type(error).__name__), patch.multiple(get_token, CLIENT_ID="fixture", CLIENT_SECRET="fixture"), patch.object(get_token, "capture_authorization_code", side_effect=error), patch.object(get_token, "_exchange_via_curl") as curl, patch.object(get_token, "_exchange_via_urllib") as urllib, contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit) as result:
                     get_token.main()
                 self.assertEqual(result.exception.code, exit_code)
                 curl.assert_not_called()
-                requests.assert_not_called()
+                urllib.assert_not_called()
 
     def test_browser_failure_preserves_manual_callback(self) -> None:
         with patch("oauth_callback.webbrowser.open", side_effect=OSError("fixture browser unavailable")), patch.object(CallbackServer, "wait_for_code", return_value="fixture-code"), contextlib.redirect_stdout(io.StringIO()) as output:
@@ -228,11 +230,92 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("Use the printed URL manually", output.getvalue())
 
     def test_success_exchanges_only_validated_code(self) -> None:
-        with patch.multiple(get_token, CLIENT_ID="fixture", CLIENT_SECRET="fixture"), patch.object(get_token, "capture_authorization_code", return_value="fixture-code"), patch.object(get_token, "_exchange_via_curl", return_value={"refresh_token": "fixture-refresh"}) as curl, patch.object(get_token, "_exchange_via_requests") as requests, contextlib.redirect_stdout(io.StringIO()) as output:
+        with patch.multiple(get_token, CLIENT_ID="fixture", CLIENT_SECRET="fixture"), patch.object(get_token, "capture_authorization_code", return_value="fixture-code"), patch.object(get_token, "_exchange_via_curl", return_value={"refresh_token": "fixture-refresh"}) as curl, patch.object(get_token, "_exchange_via_urllib") as urllib, contextlib.redirect_stdout(io.StringIO()) as output:
             get_token.main()
         curl.assert_called_once_with("fixture-code")
-        requests.assert_not_called()
+        urllib.assert_not_called()
         self.assertNotIn("fixture-code", output.getvalue())
+
+
+class TokenExchangeTests(unittest.TestCase):
+    def test_curl_sends_form_only_on_stdin(self) -> None:
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs))
+            if command[0] == "curl.exe":
+                raise FileNotFoundError
+            return subprocess.CompletedProcess(command, 0, b'{"refresh_token":"fixture-refresh"}\n---HTTP_STATUS:200', b"")
+
+        with patch.multiple(get_token, CLIENT_ID="fixture-client", CLIENT_SECRET="fixture-secret", REDIRECT_URI="http://localhost:8123/callback"), \
+             patch.object(get_token.subprocess, "run", side_effect=run):
+            self.assertEqual(get_token._exchange_via_curl("fixture-code"), {"refresh_token": "fixture-refresh"})
+
+        command, options = calls[-1]
+        self.assertEqual(command[0], "curl")
+        self.assertEqual(command[1], "-q")
+        self.assertIn("--data-binary", command)
+        self.assertEqual(command[command.index("--data-binary") + 1], "@-")
+        self.assertNotIn("fixture-code", "\0".join(command))
+        self.assertNotIn("fixture-secret", "\0".join(command))
+        self.assertEqual(parse_qs(options["input"].decode("utf-8"))["code"], ["fixture-code"])
+        self.assertEqual(parse_qs(options["input"].decode("utf-8"))["client_secret"], ["fixture-secret"])
+
+    def test_urllib_is_used_only_when_neither_curl_exists(self) -> None:
+        with patch.object(get_token.subprocess, "run", side_effect=FileNotFoundError) as run, contextlib.redirect_stdout(io.StringIO()):
+            self.assertIs(get_token._exchange_via_curl("fixture-code"), get_token.CURL_UNAVAILABLE)
+        self.assertEqual([call.args[0][0] for call in run.call_args_list], ["curl.exe", "curl"])
+
+        with patch.multiple(get_token, CLIENT_ID="fixture", CLIENT_SECRET="fixture"), \
+             patch.object(get_token, "capture_authorization_code", return_value="fixture-code"), \
+             patch.object(get_token, "_exchange_via_curl", return_value=get_token.CURL_UNAVAILABLE), \
+             patch.object(get_token, "_exchange_via_urllib", return_value={"refresh_token": "fixture-refresh"}) as urllib, \
+             contextlib.redirect_stdout(io.StringIO()):
+            get_token.main()
+        urllib.assert_called_once_with("fixture-code")
+
+    def test_curl_attempt_never_falls_back_to_urllib(self) -> None:
+        with patch.multiple(get_token, CLIENT_ID="fixture", CLIENT_SECRET="fixture"), \
+             patch.object(get_token, "capture_authorization_code", return_value="fixture-code"), \
+             patch.object(get_token, "_exchange_via_curl", return_value=None), \
+             patch.object(get_token, "_exchange_via_urllib") as urllib, \
+             contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as result:
+                get_token.main()
+        self.assertEqual(result.exception.code, 1)
+        urllib.assert_not_called()
+
+    def test_exchange_errors_log_only_status_and_oauth_error(self) -> None:
+        curl_failure = subprocess.CompletedProcess(
+            ["curl.exe"], 0,
+            b'{"error":"invalid_grant","description":"fixture-private-detail"}\n---HTTP_STATUS:400',
+            b"fixture-private-stderr",
+        )
+        with patch.object(get_token.subprocess, "run", return_value=curl_failure), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertIsNone(get_token._exchange_via_curl("fixture-code"))
+        self.assertIn("HTTP 400", output.getvalue())
+        self.assertIn("invalid_grant", output.getvalue())
+        self.assertNotIn("fixture-private", output.getvalue())
+
+        error = HTTPError(
+            get_token.TOKEN_URL,
+            500,
+            "fixture",
+            None,
+            io.BytesIO(b"malformed fixture-private-body"),
+        )
+        with patch.object(get_token, "urlopen", side_effect=error), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertIsNone(get_token._exchange_via_urllib("fixture-code"))
+        self.assertEqual(output.getvalue().strip(), "Trying token exchange via Python urllib...\nurllib exchange failed (HTTP 500)")
+
+    def test_missing_refresh_token_never_prints_token_dictionary(self) -> None:
+        with patch.multiple(get_token, CLIENT_ID="fixture", CLIENT_SECRET="fixture"), \
+             patch.object(get_token, "capture_authorization_code", return_value="fixture-code"), \
+             patch.object(get_token, "_exchange_via_curl", return_value={"access_token": "fixture-private-access"}), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(SystemExit):
+                get_token.main()
+        self.assertNotIn("fixture-private-access", output.getvalue())
 
 
 if __name__ == "__main__":

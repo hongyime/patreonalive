@@ -5,10 +5,10 @@ campaign webhook. This activity is not a guarantee that Patreon keeps a page pub
 
 ## Bootstrap authorization
 
-Use Python 3.11 or newer. From the repository directory:
+Use Python 3.11 or newer. The scripts use only the standard library; no package
+installation is needed. From the repository directory:
 
 ```powershell
-python -m pip install -r requirements.txt
 $env:PATREON_CLIENT_ID = '<your-client-id>'
 $env:PATREON_CLIENT_SECRET = '<your-client-secret>'
 python get_token.py
@@ -47,11 +47,10 @@ from GitHub Actions secrets. The latest refresh token is restored into ignored
 a cache miss. A rotated token is saved to the cache even if a later activity
 step fails. The job reports failures with a nonzero exit status.
 
-Each API call has a five-second connection timeout and a twenty-second read
-timeout. Redirects and automatic retries are disabled. These are network
-inactivity limits; the Actions script step also has a two-minute total limit,
-within a five-minute job limit, so the cache-save step has time to run after
-a script timeout. A cancelled or terminated runner can still interrupt saving.
+Each API call uses one twenty-second socket timeout. Redirects and automatic
+retries are disabled. The Actions script step also has a two-minute total limit,
+within a five-minute job limit, so the cache-save step has time to run after a
+script timeout. A cancelled or terminated runner can still interrupt saving.
 
 Success requires confirmed webhook creation and deletion. A failed deletion
 leaves the created webhook ID in the job log for review; the job does not
@@ -77,6 +76,10 @@ Tests use synthetic authorization values, mocked token exchanges and real local
 HTTP connections. They do not open a real browser, contact Patreon, load saved
 tokens, rotate credentials or dispatch the scheduled workflow. Hosted validation
 covers Linux with Python 3.11 and Windows with Python 3.12.
+
+See [.env.example](.env.example) for the required variables and documented
+defaults. It is a reference file; set its values in your shell or GitHub Actions
+secrets rather than committing a populated `.env` file.
 
 ## License
 

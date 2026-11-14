@@ -12,39 +12,37 @@ Usage (PowerShell):
     $env:PATREON_CLIENT_SECRET = '<your-new-client-secret>'
     python get_token.py
 
-The script:
-  1. Starts a local HTTP server on 127.0.0.1:8080/callback.
-  2. Prints the Patreon authorization URL and opens it in your browser.
-  3. You approve on Patreon. Browser redirects back to localhost:8080/callback.
-  4. Server captures the ?code=XXX param and does the token exchange.
-  5. Prints the fresh refresh_token + the gh secret set command.
-
-Redirect URI to register on Patreon:
-    http://localhost:8080/callback
-
-Requirements:
-    pip install requests
+The script uses only the Python standard library. It starts a local callback
+server, opens the Patreon authorization URL, exchanges the validated code, and
+prints the refresh token for manual secret setup.
 """
 
-import os
-import sys
 import json
+import os
+import re
 import subprocess
+import sys
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
 from oauth_callback import OAuthAuthorizationError, capture_authorization_code
 
-import requests
-
-CLIENT_ID = os.environ.get('PATREON_CLIENT_ID')
-CLIENT_SECRET = os.environ.get('PATREON_CLIENT_SECRET')
-REDIRECT_URI = os.environ.get('PATREON_REDIRECT_URI', 'http://localhost:8080/callback')
+CLIENT_ID = os.environ.get("PATREON_CLIENT_ID")
+CLIENT_SECRET = os.environ.get("PATREON_CLIENT_SECRET")
+REDIRECT_URI = os.environ.get("PATREON_REDIRECT_URI", "http://localhost:8080/callback")
 SCOPES = "w:campaigns.webhook"
+TOKEN_URL = "https://www.patreon.com/api/oauth2/token"
+USER_AGENT = "PatreonKeepAlive/5.0"
+CURL_UNAVAILABLE = object()
 
-def main():
+
+def main() -> None:
     missing = []
     if not CLIENT_ID:
-        missing.append('PATREON_CLIENT_ID')
+        missing.append("PATREON_CLIENT_ID")
     if not CLIENT_SECRET:
-        missing.append('PATREON_CLIENT_SECRET')
+        missing.append("PATREON_CLIENT_SECRET")
     if missing:
         print(f"ERROR: env vars not set: {', '.join(missing)}")
         print("Set them (PowerShell):")
@@ -53,7 +51,7 @@ def main():
         sys.exit(1)
 
     try:
-        timeout = float(os.environ.get('PATREON_AUTH_TIMEOUT', '300'))
+        timeout = float(os.environ.get("PATREON_AUTH_TIMEOUT", "300"))
         code = capture_authorization_code(CLIENT_ID, REDIRECT_URI, SCOPES, timeout=timeout)
     except KeyboardInterrupt:
         print("\nCancelled by user.")
@@ -64,19 +62,15 @@ def main():
 
     print("Authorization code received.")
     print("Exchanging code for tokens...")
-
-    # Use curl.exe first — it uses Windows' native SChannel TLS which sidesteps
-    # SSL-inspection middleboxes (antivirus, corporate proxies) that break
-    # Python's OpenSSL-based requests. Fall back to requests if curl not found.
-    tokens = _exchange_via_curl(code) or _exchange_via_requests(code)
-
+    tokens = _exchange_via_curl(code)
+    if tokens is CURL_UNAVAILABLE:
+        tokens = _exchange_via_urllib(code)
     if not tokens:
         sys.exit(1)
 
-    refresh_token = tokens.get('refresh_token')
-    if not refresh_token:
+    refresh_token = tokens.get("refresh_token") if isinstance(tokens, dict) else None
+    if not isinstance(refresh_token, str) or not refresh_token:
         print("ERROR: response missing refresh_token")
-        print(tokens)
         sys.exit(1)
 
     print()
@@ -91,86 +85,123 @@ def main():
     print("=" * 70)
 
 
-def _exchange_via_curl(code):
-    """Do the token exchange using curl.exe (Windows SChannel TLS). Returns dict or None."""
-    curl_path = None
-    for cand in ('curl.exe', 'curl'):
+def _form_body(code: str) -> bytes:
+    return urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "redirect_uri": REDIRECT_URI,
+    }).encode("utf-8")
+
+
+def _safe_status(status: object) -> str:
+    value = str(status)
+    return value if re.fullmatch(r"[0-9]{3}", value) else "?"
+
+
+def _oauth_error(body: bytes | str) -> str | None:
+    try:
+        value = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    error = value.get("error") if isinstance(value, dict) else None
+    return error if isinstance(error, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,64}", error) else None
+
+
+def _report_exchange_failure(transport: str, status: object, body: bytes | str = b"") -> None:
+    message = f"{transport} exchange failed (HTTP {_safe_status(status)})"
+    if error := _oauth_error(body):
+        message += f": {error}"
+    print(message)
+
+
+def _parse_exchange_response(transport: str, status: object, body: bytes) -> dict | None:
+    if _safe_status(status) != "200":
+        _report_exchange_failure(transport, status, body)
+        return None
+    try:
+        tokens = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        _report_exchange_failure(transport, status)
+        return None
+    if not isinstance(tokens, dict):
+        _report_exchange_failure(transport, status)
+        return None
+    return tokens
+
+
+def _curl_output(output: bytes) -> tuple[str, bytes]:
+    body, marker, status = output.rpartition(b"\n---HTTP_STATUS:")
+    if not marker:
+        return "?", output
+    return _safe_status(status.strip().decode("ascii", "ignore")), body
+
+
+def _exchange_via_curl(code: str) -> dict | object | None:
+    """Use curl when available; an attempted exchange is never retried."""
+    form_body = _form_body(code)
+    for curl in ("curl.exe", "curl"):
         try:
-            r = subprocess.run([cand, '--version'], capture_output=True, timeout=5)
-            if r.returncode == 0:
-                curl_path = cand
-                break
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+            result = subprocess.run(
+                [
+                    curl,
+                    "-q",
+                    "-sS",
+                    "-X", "POST",
+                    TOKEN_URL,
+                    "-H", f"User-Agent: {USER_AGENT}",
+                    "-H", "Accept: application/json",
+                    "-H", "Content-Type: application/x-www-form-urlencoded",
+                    "--data-binary", "@-",
+                    "-w", "\n---HTTP_STATUS:%{http_code}",
+                ],
+                input=form_body,
+                capture_output=True,
+                timeout=30,
+            )
+        except FileNotFoundError:
             continue
-    if not curl_path:
-        print("curl not available on PATH; falling back to Python requests...")
-        return None
+        except (OSError, subprocess.TimeoutExpired):
+            _report_exchange_failure("curl", "?")
+            return None
 
-    print(f"Trying token exchange via {curl_path} (native TLS)...")
-    result = subprocess.run(
-        [
-            curl_path, '-sS', '-X', 'POST',
-            'https://www.patreon.com/api/oauth2/token',
-            '-H', 'User-Agent: PatreonBootstrap/2.0',
-            '-H', 'Accept: application/json',
-            '--data-urlencode', 'grant_type=authorization_code',
-            '--data-urlencode', f'code={code}',
-            '--data-urlencode', f'client_id={CLIENT_ID}',
-            '--data-urlencode', f'client_secret={CLIENT_SECRET}',
-            '--data-urlencode', f'redirect_uri={REDIRECT_URI}',
-            '-w', '\n---HTTP_STATUS:%{http_code}',
-        ],
-        capture_output=True, text=True, timeout=30,
+        status, body = _curl_output(result.stdout)
+        if result.returncode != 0:
+            _report_exchange_failure("curl", status, body)
+            return None
+        return _parse_exchange_response("curl", status, body)
+
+    print("curl not available on PATH; using Python urllib.")
+    return CURL_UNAVAILABLE
+
+
+def _exchange_via_urllib(code: str) -> dict | None:
+    """Use the standard-library fallback only when curl is unavailable."""
+    print("Trying token exchange via Python urllib...")
+    request = Request(
+        TOKEN_URL,
+        data=_form_body(code),
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": USER_AGENT,
+        },
+        method="POST",
     )
-    if result.returncode != 0:
-        print(f"curl failed (exit {result.returncode}): {result.stderr.strip()}")
-        return None
-
-    # Parse the trailing status
-    body, _, status_line = result.stdout.rpartition('---HTTP_STATUS:')
-    status = status_line.strip() or '?'
-    body = body.rstrip()
-    if status != '200':
-        print(f"curl exchange failed (HTTP {status}): {body}")
-        return None
     try:
-        return json.loads(body)
-    except json.JSONDecodeError:
-        print(f"curl response was not JSON: {body[:200]}")
-        return None
+        with urlopen(request, timeout=30) as response:
+            return _parse_exchange_response("urllib", response.getcode(), response.read())
+    except HTTPError as error:
+        try:
+            body = error.read()
+        finally:
+            error.close()
+        _report_exchange_failure("urllib", error.code, body)
+    except (OSError, TimeoutError, URLError):
+        _report_exchange_failure("urllib", "?")
+    return None
 
 
-def _exchange_via_requests(code):
-    """Python-requests fallback (used if curl unavailable)."""
-    print("Trying token exchange via Python requests (OpenSSL)...")
-    try:
-        r = requests.post(
-            "https://www.patreon.com/api/oauth2/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "redirect_uri": REDIRECT_URI,
-            },
-            headers={"User-Agent": "PatreonBootstrap/2.0"},
-            timeout=30,
-        )
-    except requests.exceptions.SSLError as e:
-        print(f"SSL error from Python requests: {e}")
-        print("This is likely a Windows SSL-inspection middlebox breaking OpenSSL.")
-        print("Retry the whole script — the curl.exe fallback should catch this next time.")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"Network error: {e}")
-        return None
-
-    if r.status_code != 200:
-        print(f"ERROR: token exchange failed ({r.status_code})")
-        print(r.text)
-        return None
-    return r.json()
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

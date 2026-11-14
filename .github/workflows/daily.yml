@@ -44,9 +44,6 @@ jobs:
           restore-keys: |
             patreon-refresh-token-
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
       - name: Run Activity Script
         timeout-minutes: 2
         env:

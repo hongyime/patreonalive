@@ -21,17 +21,16 @@ A Python script that keeps a Patreon creator campaign active by periodically mak
 
 ## Tech Stack
 - **Language**: Python 3.x
-- **Libraries**: `requests` (pip)
+- **Libraries**: Python standard library only
 - **Auth**: Patreon OAuth2 (refresh_token grant)
-- **Environment vars**: `PATREON_CLIENT_ID`, `PATREON_CLIENT_SECRET`
+- **Environment vars**: `PATREON_CLIENT_ID`, `PATREON_CLIENT_SECRET`, optional `PATREON_CAMPAIGN_ID`
 - **Runtime**: any Python 3 environment; designed for GitHub Actions
 
 ## Architecture
 ```
 patreonalive/
 ├── keep_alive.py    # main script
-├── token.txt        # persisted refresh token (gitignored)
-└── requirements.txt
+└── token.txt        # persisted refresh token (gitignored)
 ```
 
 **Flow:**
@@ -74,11 +73,12 @@ patreonalive/
 | `token.txt` | Single-line refresh token; updated each run |
 | `PATREON_CLIENT_ID` | Environment variable — Patreon app client ID |
 | `PATREON_CLIENT_SECRET` | Environment variable — Patreon app client secret |
-| `CAMPAIGN_ID` | Hardcoded in script — your Patreon campaign ID |
+| `PATREON_CAMPAIGN_ID` | Optional environment variable — Patreon campaign ID; defaults to `12502474` |
+| `PATREON_REDIRECT_URI` | Optional OAuth callback URI; defaults to `http://localhost:8080/callback` |
+| `PATREON_AUTH_TIMEOUT` | Optional OAuth callback wait in seconds; defaults to `300` (maximum `900`) |
 
 ## Deployment / Run
 ```bash
-pip install requests
 export PATREON_CLIENT_ID=xxx
 export PATREON_CLIENT_SECRET=xxx
 # Place initial refresh token in token.txt
@@ -98,4 +98,4 @@ on:
 - **Dummy webhook URI**: points to a dead URL — Patreon may eventually reject invalid URIs
 - **Cadence**: the scheduled workflow runs once daily; current provider quota headroom is not established by its schedule alone
 - **Persistence**: Actions cache currently retains the latest rotated token outside Supabase. Any migration must coordinate this writer and preserve that token; this callback repair does not migrate storage or retire credentials.
-- **Campaign ID**: must be updated if script is reused for a different creator account
+- **Campaign ID**: set `PATREON_CAMPAIGN_ID` if the script is reused for a different creator account
